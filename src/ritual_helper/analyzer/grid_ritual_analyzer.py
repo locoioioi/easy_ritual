@@ -83,6 +83,10 @@ class GridRitualAnalyzer:
             (1, 2),
             (1, 3),
             (1, 4),
+            (1, 5),
+            (1, 6),
+            (1, 7),
+            (1, 8),
             (2, 1),
             (2, 2),
             (2, 3),
@@ -101,13 +105,15 @@ class GridRitualAnalyzer:
         foreground_mask = self._build_grayscale_foreground_mask(image, frame.client_width, frame.client_height)
         cells = self._apply_foreground_occupancy(cells, foreground_mask, frame.client_width, frame.client_height)
         mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, cells)
-        groups = self._group_from_mask_evidence(
-            cells,
-            mask_components,
-            {(cell.row, cell.column): cell for cell in cells},
-            frame.client_width,
-            frame.client_height,
-        ) or self._group_cells(cells)
+        groups = self._detect_foreground_rectangles(foreground_mask, cells, frame.client_width, frame.client_height)
+        if not groups:
+            groups = self._group_from_mask_evidence(
+                cells,
+                mask_components,
+                {(cell.row, cell.column): cell for cell in cells},
+                frame.client_width,
+                frame.client_height,
+            ) or self._group_cells(cells)
         self._write_debug(cells, groups, image, debug_dir, foreground_mask, mask_components)
         items = [self._group_to_item(index, group) for index, group in enumerate(groups, start=1)]
         actions = [
@@ -216,11 +222,16 @@ class GridRitualAnalyzer:
         cell_width = board_width / self.columns
         cell_height = board_height / self.rows
         by_position = {(cell.row, cell.column): cell for cell in cells}
-        contours = self._foreground_contours(foreground_mask)
+        contours = self._merge_line_like_contours(
+            self._foreground_contours(foreground_mask),
+            cell_width,
+            cell_height,
+            by_position,
+        )
         candidates: list[dict[str, object]] = []
         for contour in contours:
             x1, y1, x2, y2, pixels = contour
-            if pixels < 35:
+            if pixels < self.mask_min_area:
                 continue
             min_column = max(0, int(x1 / cell_width))
             max_column = min(self.columns - 1, int((x2 - 1) / cell_width))
@@ -231,9 +242,18 @@ class GridRitualAnalyzer:
                 for row in range(min_row, max_row + 1)
                 for column in range(min_column, max_column + 1)
             )
-            if not positions or len(positions) > self.max_item_cells:
+            if not positions or not self._is_legal_item_shape(positions):
                 continue
             contour_cells = [by_position[position] for position in sorted(positions)]
+            deferred_cells = [
+                cell
+                for cell in contour_cells
+                if cell.gold_ratio >= self.deferred_gold_ratio_threshold
+            ]
+            deferred = bool(deferred_cells) and (
+                len(contour_cells) == 1
+                or len(deferred_cells) / len(contour_cells) >= 0.5
+            )
             rect = self._pixel_rect_to_ratio_rect(
                 (
                     max(left, x1 + left - 2),
@@ -249,7 +269,7 @@ class GridRitualAnalyzer:
                     "local_bbox": (x1, y1, x2, y2),
                     "cells": contour_cells,
                     "pixels": pixels,
-                    "deferred": any(cell.gold_ratio >= self.deferred_gold_ratio_threshold for cell in contour_cells),
+                    "deferred": deferred,
                     "rect": rect,
                 }
             )
