@@ -69,6 +69,7 @@ class GridRitualAnalyzer:
         self.canny_dilate_kernel = int(grid_config.get("canny_dilate_kernel", 3))
         self.canny_dilate_iterations = int(grid_config.get("canny_dilate_iterations", 1))
         self.mask_min_area = float(grid_config.get("mask_min_area", 120.0))
+        self.contour_cell_min_overlap_ratio = float(grid_config.get("contour_cell_min_overlap_ratio", 0.12))
         self.allowed_item_shapes = {
             (1, 1),
             (1, 2),
@@ -263,15 +264,11 @@ class GridRitualAnalyzer:
             x1, y1, x2, y2, pixels = contour
             if pixels < self.mask_min_area:
                 continue
-            min_column = max(0, int(x1 / cell_width))
-            max_column = min(self.columns - 1, int((x2 - 1) / cell_width))
-            min_row = max(0, int(y1 / cell_height))
-            max_row = min(self.rows - 1, int((y2 - 1) / cell_height))
-            positions = frozenset(
-                (row, column)
-                for row in range(min_row, max_row + 1)
-                for column in range(min_column, max_column + 1)
-                if (row, column) not in deferred_positions
+            positions = self._contour_cell_positions(
+                (x1, y1, x2, y2),
+                cell_width,
+                cell_height,
+                deferred_positions,
             )
             if not positions or not self._is_legal_item_shape(positions):
                 continue
@@ -323,6 +320,35 @@ class GridRitualAnalyzer:
                 )
             )
         return sorted(groups, key=lambda group: (min(cell.row for cell in group.cells), min(cell.column for cell in group.cells)))
+
+    def _contour_cell_positions(
+        self,
+        bbox: tuple[int, int, int, int],
+        cell_width: float,
+        cell_height: float,
+        excluded_positions: set[tuple[int, int]],
+    ) -> frozenset[tuple[int, int]]:
+        x1, y1, x2, y2 = bbox
+        min_column = max(0, int(x1 / cell_width))
+        max_column = min(self.columns - 1, int((x2 - 1) / cell_width))
+        min_row = max(0, int(y1 / cell_height))
+        max_row = min(self.rows - 1, int((y2 - 1) / cell_height))
+        cell_area = max(1.0, cell_width * cell_height)
+        positions: set[tuple[int, int]] = set()
+        for row in range(min_row, max_row + 1):
+            for column in range(min_column, max_column + 1):
+                if (row, column) in excluded_positions:
+                    continue
+                cell_x1 = column * cell_width
+                cell_y1 = row * cell_height
+                cell_x2 = (column + 1) * cell_width
+                cell_y2 = (row + 1) * cell_height
+                overlap_width = max(0.0, min(x2, cell_x2) - max(x1, cell_x1))
+                overlap_height = max(0.0, min(y2, cell_y2) - max(y1, cell_y1))
+                overlap_ratio = (overlap_width * overlap_height) / cell_area
+                if overlap_ratio >= self.contour_cell_min_overlap_ratio:
+                    positions.add((row, column))
+        return frozenset(positions)
 
     @staticmethod
     def _suppress_nested_foreground_candidates(candidates: list[dict[str, object]]) -> list[dict[str, object]]:

@@ -57,6 +57,7 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "vision.grid.canny_dilate_kernel": 3,
     "vision.grid.canny_dilate_iterations": 1,
     "vision.grid.mask_min_area": 120.0,
+    "vision.grid.contour_cell_min_overlap_ratio": 0.12,
 }
 
 
@@ -183,6 +184,7 @@ class RitualHelperGui:
         self._entry(parent, "Canny dilate kernel", "vision.grid.canny_dilate_kernel", row=11)
         self._entry(parent, "Canny dilate iterations", "vision.grid.canny_dilate_iterations", row=12)
         self._entry(parent, "Mask minimum area", "vision.grid.mask_min_area", row=13)
+        self._entry(parent, "Contour cell overlap", "vision.grid.contour_cell_min_overlap_ratio", row=14)
 
     def _entry(self, parent: ttk.Frame, label: str, key: str, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=4)
