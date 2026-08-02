@@ -50,6 +50,7 @@ class MaskComponent:
     cells: list[CellAnalysis]
     pixel_count: int
     bbox: tuple[int, int, int, int]
+    area: float = 0.0
 
 
 class GridRitualAnalyzer:
@@ -70,6 +71,13 @@ class GridRitualAnalyzer:
         self.item_click_delay_ms = int(grid_config.get("after_item_click_ms", 400))
         self.content_ratio_threshold = float(grid_config.get("content_ratio_threshold", 0.035))
         self.brown_line_ratio_threshold = float(grid_config.get("brown_line_ratio_threshold", 0.02))
+        self.use_grayscale_mask = bool(grid_config.get("use_grayscale_mask", True))
+        self.canny_threshold1 = int(grid_config.get("canny_threshold1", 70))
+        self.canny_threshold2 = int(grid_config.get("canny_threshold2", 150))
+        self.canny_dilate_kernel = int(grid_config.get("canny_dilate_kernel", 3))
+        self.canny_dilate_iterations = int(grid_config.get("canny_dilate_iterations", 1))
+        self.mask_min_area = float(grid_config.get("mask_min_area", 120.0))
+        self.mask_cell_ratio_threshold = float(grid_config.get("mask_cell_ratio_threshold", 0.012))
         self.allowed_item_shapes = {
             (1, 1),
             (1, 2),
@@ -90,8 +98,17 @@ class GridRitualAnalyzer:
         board_crop.save(debug_dir / "board.png")
 
         cells = self._analyze_cells(image, frame.client_width, frame.client_height)
-        groups = self._group_cells(cells)
-        self._write_debug(cells, groups, image, debug_dir)
+        foreground_mask = self._build_grayscale_foreground_mask(image, frame.client_width, frame.client_height)
+        cells = self._apply_foreground_occupancy(cells, foreground_mask, frame.client_width, frame.client_height)
+        mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, cells)
+        groups = self._group_from_mask_evidence(
+            cells,
+            mask_components,
+            {(cell.row, cell.column): cell for cell in cells},
+            frame.client_width,
+            frame.client_height,
+        ) or self._group_cells(cells)
+        self._write_debug(cells, groups, image, debug_dir, foreground_mask, mask_components)
         items = [self._group_to_item(index, group) for index, group in enumerate(groups, start=1)]
         actions = [
             PlanAction(
@@ -545,6 +562,49 @@ class GridRitualAnalyzer:
 
         return mask
 
+    def _build_grayscale_foreground_mask(
+        self,
+        image: Image.Image,
+        width: int,
+        height: int,
+    ) -> Image.Image:
+        if not self.use_grayscale_mask:
+            return self._build_foreground_mask(image, width, height)
+        try:
+            import cv2
+            import numpy as np
+        except Exception:
+            return self._build_foreground_mask(image, width, height)
+
+        left, top, right, bottom = self.board.to_pixels(width, height)
+        board_crop = image.crop((left, top, right, bottom)).convert("RGB")
+        board_width, board_height = board_crop.size
+        cell_width = board_width / self.columns
+        cell_height = board_height / self.rows
+
+        rgb = np.array(board_crop)
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 1)
+        edges = cv2.Canny(blur, self.canny_threshold1, self.canny_threshold2)
+        kernel_size = max(1, self.canny_dilate_kernel)
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+        mask = cv2.dilate(edges, kernel, iterations=max(0, self.canny_dilate_iterations))
+
+        # Suppress grid/border lines. The item art inside each known cell is the signal.
+        for column in range(1, self.columns):
+            grid_x = round(column * cell_width)
+            mask[:, max(0, grid_x - 4) : min(board_width, grid_x + 5)] = 0
+        for row in range(1, self.rows):
+            grid_y = round(row * cell_height)
+            mask[max(0, grid_y - 4) : min(board_height, grid_y + 5), :] = 0
+        border = 8
+        mask[:border, :] = 0
+        mask[max(0, board_height - border) :, :] = 0
+        mask[:, :border] = 0
+        mask[:, max(0, board_width - border) :] = 0
+
+        return Image.fromarray(mask).convert("L")
+
     def _apply_foreground_occupancy(
         self,
         cells: list[CellAnalysis],
@@ -576,7 +636,7 @@ class GridRitualAnalyzer:
                     if mask_pixels[x, y] > 0:
                         foreground_pixels += 1
             foreground_ratio = foreground_pixels / max(total_pixels, 1)
-            occupied = foreground_ratio >= 0.018
+            occupied = foreground_ratio >= self.mask_cell_ratio_threshold or cell.deferred
             filtered_out = not occupied and cell.mean >= self.occupied_mean_threshold
             updated_cells.append(
                 replace(
@@ -637,7 +697,7 @@ class GridRitualAnalyzer:
                             stack.append((neighbor_x, neighbor_y))
 
                 pixel_count = len(xs)
-                if pixel_count < 35:
+                if pixel_count < self.mask_min_area:
                     continue
                 x1, y1, x2, y2 = min(xs), min(ys), max(xs) + 1, max(ys) + 1
                 component_cells = []
@@ -661,6 +721,7 @@ class GridRitualAnalyzer:
                             cells=[component_by_position[key] for key in sorted(component_by_position)],
                             pixel_count=pixel_count,
                             bbox=(x1 + left, y1 + top, x2 + left, y2 + top),
+                            area=float(pixel_count),
                         )
                     )
 
@@ -728,7 +789,7 @@ class GridRitualAnalyzer:
                     ):
                         continue
                     row_gap = max(min(candidate_rows) - max(current_rows), min(current_rows) - max(candidate_rows))
-                    if row_gap > 2:
+                    if row_gap > 1:
                         continue
                     combined_cells = sorted(current.cells + candidate.cells, key=lambda cell: (cell.row, cell.column))
                     current = self._component_to_group(combined_cells)
@@ -1089,6 +1150,8 @@ class GridRitualAnalyzer:
         groups: list[ItemGroup],
         image: Image.Image,
         debug_dir: Path,
+        foreground_mask: Image.Image | None = None,
+        mask_components: list[MaskComponent] | None = None,
     ) -> None:
         write_json(
             debug_dir / "item-groups.json",
@@ -1123,6 +1186,15 @@ class GridRitualAnalyzer:
             cell_draw.rectangle(rect, outline=color, width=2)
             cell_draw.text((rect[0] + 4, rect[1] + 4), f"{cell.row + 1},{cell.column + 1}", fill=color)
         cell_overlay.save(debug_dir / "cell-analysis.png")
+        if foreground_mask is not None:
+            foreground_mask.save(debug_dir / "grayscale-foreground-mask.png")
+        if mask_components is not None:
+            component_overlay = image.copy()
+            component_draw = ImageDraw.Draw(component_overlay)
+            for index, component in enumerate(mask_components, start=1):
+                component_draw.rectangle(component.bbox, outline=(255, 0, 255), width=2)
+                component_draw.text((component.bbox[0] + 3, component.bbox[1] + 3), str(index), fill=(255, 0, 255))
+            component_overlay.save(debug_dir / "mask-components.png")
 
     def _inset_rect(self, rect: RatioRect) -> RatioRect:
         width = rect.right - rect.left

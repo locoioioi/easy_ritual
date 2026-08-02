@@ -79,11 +79,12 @@ def test_provided_ritual_fixture_detects_deferred_and_available_items(tmp_path: 
     assert selected_items == deferred_items
     assert review_items == available_items
     assert len(plan.actions) == len(deferred_items)
-    assert all(len(item.grid_cells) == 1 for item in plan.items)
     assert execution_result.status == "completed"
     assert (tmp_path / "output" / "debug" / "selection-preview.png").exists()
     debug_run = next((tmp_path / "output" / "debug").glob("run-*"))
     assert (debug_run / "cell-analysis.png").exists()
+    assert (debug_run / "grayscale-foreground-mask.png").exists()
+    assert (debug_run / "mask-components.png").exists()
     assert not (debug_run / "foreground-mask.png").exists()
     assert not (debug_run / "grouped-items.png").exists()
     assert (debug_run / "item-groups.json").exists()
@@ -112,12 +113,14 @@ def test_second_ritual_fixture_filters_grey_cells_and_clicks_deferred_items(tmp_
     assert all(item.decision == "select" for item in deferred_items)
     assert all(item.decision == "review" for item in available_items)
     assert max(len(item.grid_cells) for item in plan.items) <= 8
-    assert all(len(item.grid_cells) == 1 for item in plan.items)
+    assert any(len(item.grid_cells) > 1 for item in available_items)
     assert len(plan.actions) == len(deferred_items)
     assert plan.summary.items_selected == len(deferred_items)
     assert execution_result.status == "completed"
     debug_run = next((tmp_path / "output" / "debug").glob("run-*"))
     assert (debug_run / "cell-analysis.png").exists()
+    assert (debug_run / "grayscale-foreground-mask.png").exists()
+    assert (debug_run / "mask-components.png").exists()
     assert not (debug_run / "foreground-mask.png").exists()
     assert not (debug_run / "grouped-items.png").exists()
     assert (debug_run / "item-groups.json").exists()
