@@ -96,6 +96,7 @@ class GridRitualAnalyzer:
         grid_cells = self._grid_template_cells(frame.client_width, frame.client_height)
         foreground_mask = self._build_grayscale_foreground_mask(image, frame.client_width, frame.client_height)
         deferred_positions = self._detect_deferred_positions(image, frame.client_width, frame.client_height)
+        available_mask = self._mask_without_deferred_cells(foreground_mask, deferred_positions, frame.client_width, frame.client_height)
         mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, grid_cells)
         contour_groups = self._detect_foreground_rectangles(
             foreground_mask,
@@ -105,6 +106,16 @@ class GridRitualAnalyzer:
             deferred_positions,
         )
         groups = self._normalize_contour_groups(contour_groups, grid_cells, deferred_positions)
+        groups = self._add_unclaimed_available_groups(
+            groups,
+            self._detect_foreground_rectangles(
+                available_mask,
+                grid_cells,
+                frame.client_width,
+                frame.client_height,
+                deferred_positions,
+            ),
+        )
         if not groups:
             groups = self._detect_foreground_rectangles(
                 foreground_mask,
@@ -113,7 +124,7 @@ class GridRitualAnalyzer:
                 frame.client_height,
                 set(),
             )
-        self._write_debug(groups, image, debug_dir, foreground_mask, mask_components, foreground_mask)
+        self._write_debug(groups, image, debug_dir, foreground_mask, mask_components, available_mask)
         items = [self._group_to_item(index, group) for index, group in enumerate(groups, start=1)]
         actions = [
             PlanAction(
@@ -225,6 +236,25 @@ class GridRitualAnalyzer:
             )
         )
         return sorted(normalized, key=lambda group: (min(cell.row for cell in group.cells), min(cell.column for cell in group.cells)))
+
+    @staticmethod
+    def _add_unclaimed_available_groups(
+        groups: list[ItemGroup],
+        available_groups: list[ItemGroup],
+    ) -> list[ItemGroup]:
+        claimed = {
+            (cell.row, cell.column)
+            for group in groups
+            for cell in group.cells
+        }
+        merged = list(groups)
+        for group in available_groups:
+            positions = {(cell.row, cell.column) for cell in group.cells}
+            if not positions or positions & claimed:
+                continue
+            merged.append(group)
+            claimed.update(positions)
+        return sorted(merged, key=lambda group: (min(cell.row for cell in group.cells), min(cell.column for cell in group.cells)))
 
     def _mask_without_deferred_cells(
         self,
