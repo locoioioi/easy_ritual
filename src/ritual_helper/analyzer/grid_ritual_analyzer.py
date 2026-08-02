@@ -104,8 +104,12 @@ class GridRitualAnalyzer:
         cells = self._analyze_cells(image, frame.client_width, frame.client_height)
         foreground_mask = self._build_grayscale_foreground_mask(image, frame.client_width, frame.client_height)
         cells = self._apply_foreground_occupancy(cells, foreground_mask, frame.client_width, frame.client_height)
+        available_mask = self._mask_without_deferred_cells(foreground_mask, cells, frame.client_width, frame.client_height)
         mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, cells)
-        groups = self._detect_foreground_rectangles(foreground_mask, cells, frame.client_width, frame.client_height)
+        groups = [
+            *self._deferred_cell_groups(cells),
+            *self._detect_foreground_rectangles(available_mask, cells, frame.client_width, frame.client_height),
+        ]
         if not groups:
             groups = self._group_from_mask_evidence(
                 cells,
@@ -203,8 +207,41 @@ class GridRitualAnalyzer:
                         deferred=deferred,
                         filtered_out=filtered_out,
                     )
-                )
+        )
         return cells
+
+    def _deferred_cell_groups(self, cells: list[CellAnalysis]) -> list[ItemGroup]:
+        return [
+            self._component_to_group([cell])
+            for cell in cells
+            if cell.deferred
+        ]
+
+    def _mask_without_deferred_cells(
+        self,
+        foreground_mask: Image.Image,
+        cells: list[CellAnalysis],
+        width: int,
+        height: int,
+    ) -> Image.Image:
+        mask = foreground_mask.copy()
+        pixels = mask.load()
+        left, top, right, bottom = self.board.to_pixels(width, height)
+        board_width = right - left
+        board_height = bottom - top
+        cell_width = board_width / self.columns
+        cell_height = board_height / self.rows
+        for cell in cells:
+            if not cell.deferred:
+                continue
+            x1 = max(0, round(cell.column * cell_width) - 1)
+            y1 = max(0, round(cell.row * cell_height) - 1)
+            x2 = min(board_width, round((cell.column + 1) * cell_width) + 1)
+            y2 = min(board_height, round((cell.row + 1) * cell_height) + 1)
+            for y in range(y1, y2):
+                for x in range(x1, x2):
+                    pixels[x, y] = 0
+        return mask
 
     def _grid_cells(self, image: Image.Image, width: int, height: int) -> list[CellAnalysis]:
         cells = self._analyze_cells(image, width, height)
@@ -241,6 +278,7 @@ class GridRitualAnalyzer:
                 (row, column)
                 for row in range(min_row, max_row + 1)
                 for column in range(min_column, max_column + 1)
+                if not by_position[(row, column)].deferred
             )
             if not positions or not self._is_legal_item_shape(positions):
                 continue
@@ -610,13 +648,13 @@ class GridRitualAnalyzer:
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
         mask = cv2.dilate(edges, kernel, iterations=max(0, self.canny_dilate_iterations))
 
-        # Suppress grid/border lines. The item art inside each known cell is the signal.
-        for column in range(1, self.columns):
-            grid_x = round(column * cell_width)
-            mask[:, max(0, grid_x - 4) : min(board_width, grid_x + 5)] = 0
-        for row in range(1, self.rows):
-            grid_y = round(row * cell_height)
-            mask[max(0, grid_y - 4) : min(board_height, grid_y + 5), :] = 0
+        horizontal_length = max(12, round(cell_width * 0.8))
+        vertical_length = max(12, round(cell_height * 0.8))
+        horizontal_lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((1, horizontal_length), np.uint8))
+        vertical_lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((vertical_length, 1), np.uint8))
+        mask = cv2.subtract(mask, cv2.bitwise_or(horizontal_lines, vertical_lines))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+
         border = 8
         mask[:border, :] = 0
         mask[max(0, board_height - border) :, :] = 0
