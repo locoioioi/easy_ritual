@@ -96,18 +96,15 @@ class GridRitualAnalyzer:
         grid_cells = self._grid_template_cells(frame.client_width, frame.client_height)
         foreground_mask = self._build_grayscale_foreground_mask(image, frame.client_width, frame.client_height)
         deferred_positions = self._detect_deferred_positions(image, frame.client_width, frame.client_height)
-        available_mask = self._mask_without_deferred_cells(foreground_mask, deferred_positions, frame.client_width, frame.client_height)
         mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, grid_cells)
-        groups = [
-            *self._deferred_cell_groups(grid_cells, deferred_positions),
-            *self._detect_foreground_rectangles(
-                available_mask,
-                grid_cells,
-                frame.client_width,
-                frame.client_height,
-                deferred_positions,
-            ),
-        ]
+        contour_groups = self._detect_foreground_rectangles(
+            foreground_mask,
+            grid_cells,
+            frame.client_width,
+            frame.client_height,
+            deferred_positions,
+        )
+        groups = self._normalize_contour_groups(contour_groups, grid_cells, deferred_positions)
         if not groups:
             groups = self._detect_foreground_rectangles(
                 foreground_mask,
@@ -116,7 +113,7 @@ class GridRitualAnalyzer:
                 frame.client_height,
                 set(),
             )
-        self._write_debug(groups, image, debug_dir, foreground_mask, mask_components, available_mask)
+        self._write_debug(groups, image, debug_dir, foreground_mask, mask_components, foreground_mask)
         items = [self._group_to_item(index, group) for index, group in enumerate(groups, start=1)]
         actions = [
             PlanAction(
@@ -185,6 +182,49 @@ class GridRitualAnalyzer:
             for cell in cells
             if (cell.row, cell.column) in deferred_positions
         ]
+
+    def _normalize_contour_groups(
+        self,
+        contour_groups: list[ItemGroup],
+        grid_cells: list[CellAnalysis],
+        deferred_positions: set[tuple[int, int]],
+    ) -> list[ItemGroup]:
+        by_position = {(cell.row, cell.column): cell for cell in grid_cells}
+        normalized: list[ItemGroup] = []
+        claimed_positions: set[tuple[int, int]] = set()
+
+        for group in contour_groups:
+            positions = {(cell.row, cell.column) for cell in group.cells}
+            deferred_overlap = positions & deferred_positions
+            if not positions:
+                continue
+            if positions <= deferred_positions:
+                continue
+            if deferred_overlap and len(positions) <= 2:
+                positions = positions - deferred_positions
+                if not positions:
+                    continue
+                cells = [by_position[position] for position in sorted(positions)]
+                normalized.append(self._component_to_group(cells, deferred=False))
+                claimed_positions.update(positions)
+                continue
+            normalized.append(
+                ItemGroup(
+                    cells=group.cells,
+                    rect=group.rect,
+                    deferred=bool(deferred_overlap),
+                    inferred_cells=group.inferred_cells,
+                )
+            )
+            claimed_positions.update(positions)
+
+        normalized.extend(
+            self._deferred_cell_groups(
+                grid_cells,
+                deferred_positions - claimed_positions,
+            )
+        )
+        return sorted(normalized, key=lambda group: (min(cell.row for cell in group.cells), min(cell.column for cell in group.cells)))
 
     def _mask_without_deferred_cells(
         self,
@@ -268,7 +308,7 @@ class GridRitualAnalyzer:
                 (x1, y1, x2, y2),
                 cell_width,
                 cell_height,
-                deferred_positions,
+                set(),
             )
             if not positions or not self._is_legal_item_shape(positions):
                 continue
@@ -288,7 +328,7 @@ class GridRitualAnalyzer:
                     "local_bbox": (x1, y1, x2, y2),
                     "cells": contour_cells,
                     "pixels": pixels,
-                    "deferred": False,
+                    "deferred": bool(positions & deferred_positions),
                     "rect": rect,
                 }
             )

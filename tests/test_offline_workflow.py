@@ -115,7 +115,7 @@ def test_second_ritual_fixture_filters_grey_cells_and_clicks_deferred_items(tmp_
     assert all(item.decision == "select" for item in deferred_items)
     assert all(item.decision == "review" for item in available_items)
     assert max(len(item.grid_cells) for item in plan.items) <= 8
-    assert any(len(item.grid_cells) > 1 for item in available_items)
+    assert any(len(item.grid_cells) == 6 for item in plan.items)
     assert len(plan.actions) == len(deferred_items)
     assert plan.summary.items_selected == len(deferred_items)
     assert execution_result.status == "completed"
