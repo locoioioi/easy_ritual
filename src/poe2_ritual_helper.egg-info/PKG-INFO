@@ -1,0 +1,51 @@
+Metadata-Version: 2.4
+Name: poe2-ritual-helper
+Version: 0.1.0
+Summary: Offline-first Path of Exile 2 Ritual computer vision helper.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: keyboard>=0.13.5
+Requires-Dist: pillow>=11.0.0
+Requires-Dist: pydantic>=2.10.0
+Requires-Dist: tzdata>=2026.1
+Requires-Dist: typing-extensions>=4.12.0
+Provides-Extra: dev
+Requires-Dist: pytest>=9.0.0; extra == "dev"
+
+# PoE 2 Ritual Helper
+
+Offline-first scaffold for the Ritual helper described in
+`poe2_ritual_computer_vision_implementation_plan.md`.
+
+Current deliverable:
+
+- `F2` toggles the helper.
+- `T` runs the offline fixture flow.
+- `R` records the reroll/defer shell workflow in offline mode.
+- `F12` stops the app.
+- No real mouse movement is performed.
+
+Run from a checkout without installing:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m ritual_helper.main --once
+```
+
+Run interactive hotkeys:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m ritual_helper.main
+```
+
+Or install the package in editable mode:
+
+```powershell
+python -m pip install -e .[dev]
+ritual-helper --once
+```
+
+If `fixtures/screenshots/ritual.png` does not exist, the fixture capture layer
+creates a placeholder image so the full JSON and preview flow can still be
+verified.

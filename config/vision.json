@@ -1,0 +1,28 @@
+{
+  "board": {
+    "left": 0.1604,
+    "top": 0.2444,
+    "right": 0.4356,
+    "bottom": 0.7343
+  },
+  "grid": {
+    "columns": 10,
+    "rows": 10,
+    "cell_padding_px": 6,
+    "item_region_inset_ratio": 0.1,
+    "occupied_mean_threshold": 14.0,
+    "occupied_stddev_threshold": 18.0,
+    "occupied_edge_threshold": 14.0,
+    "deferred_gold_ratio_threshold": 0.013,
+    "filtered_mean_max": 12.0,
+    "filtered_stddev_max": 12.0,
+    "filtered_edge_max": 12.0,
+    "content_ratio_threshold": 0.035,
+    "brown_line_ratio_threshold": 0.02
+  },
+  "matching": {
+    "matched_score": 0.9,
+    "matched_confidence_gap": 0.05,
+    "review_score": 0.78
+  }
+}

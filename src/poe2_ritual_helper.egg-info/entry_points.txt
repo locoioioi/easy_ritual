@@ -1,0 +1,2 @@
+[console_scripts]
+ritual-helper = ritual_helper.main:main

@@ -1,0 +1,14 @@
+{
+  "minimum_defer_value": 50.0,
+  "minimum_value": 50.0,
+  "price_currency": "exalted",
+  "minimum_identification_confidence": 0.88,
+  "select_unknown_items": false,
+  "select_uncertain_items": false,
+  "category_rules": {
+    "currency": true,
+    "fragment": true,
+    "unique": true,
+    "equipment": false
+  }
+}

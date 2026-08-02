@@ -1,0 +1,57 @@
+{
+    "mode":  "live",
+    "fixture_screenshot":  "fixtures/screenshots/ritual-provided-2.jpg",
+    "analyzer":  "grid",
+    "debug_enabled":  true,
+    "live_execution_enabled":  true,
+    "executor_backends":  [
+                              "recording",
+                              "render",
+                              "live_mouse"
+                          ],
+    "output_dir":  "output",
+    "target_window":  {
+                          "title_keywords":  [
+                                                 "Path of Exile 2"
+                                             ],
+                          "process_names":  [
+                                                "PathOfExileSteam.exe",
+                                                "PathOfExile.exe",
+                                                "PathOfExile_x64.exe"
+                                            ]
+                      },
+    "pricing":  {
+                    "source":  "poe2scout",
+                    "league":  "Runes of Aldur",
+                    "timeout_seconds":  8.0
+                },
+    "delays":  {
+                   "after_item_click_ms":  300,
+                   "before_deferred_item_click_ms":  120,
+                   "after_reroll_ms":  350,
+                   "before_defer_ms":  650,
+                   "after_defer_ms":  250,
+                   "mouse_down_up_ms":  35,
+                   "before_confirm_defer_ms":  250,
+                   "after_confirm_ms":  250,
+                   "before_tooltip_copy_ms":  220,
+                   "after_tooltip_copy_ms":  120,
+                   "tooltip_copy_retry_ms":  120,
+                   "tooltip_copy_attempts":  1,
+                   "tooltip_probe_points":  5
+               },
+    "ui_controls":  {
+                        "reroll":  {
+                                       "x":  0.1969,
+                                       "y":  0.2009
+                                   },
+                        "defer":  {
+                                      "x":  0.4479,
+                                      "y":  0.2019
+                                  },
+                        "confirm_defer":  {
+                                              "x":  0.3276,
+                                              "y":  0.8231
+                                          }
+                    }
+}
