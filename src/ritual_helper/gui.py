@@ -51,18 +51,12 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "vision.grid.rows": 10,
     "vision.grid.cell_padding_px": 6,
     "vision.grid.deferred_gold_ratio_threshold": 0.013,
-    "vision.grid.occupied_mean_threshold": 14.0,
-    "vision.grid.occupied_stddev_threshold": 18.0,
-    "vision.grid.occupied_edge_threshold": 14.0,
-    "vision.grid.content_ratio_threshold": 0.035,
-    "vision.grid.brown_line_ratio_threshold": 0.02,
     "vision.grid.use_grayscale_mask": True,
     "vision.grid.canny_threshold1": 70,
     "vision.grid.canny_threshold2": 150,
     "vision.grid.canny_dilate_kernel": 3,
     "vision.grid.canny_dilate_iterations": 1,
     "vision.grid.mask_min_area": 120.0,
-    "vision.grid.mask_cell_ratio_threshold": 0.012,
 }
 
 
@@ -183,18 +177,12 @@ class RitualHelperGui:
         self._entry(parent, "Rows", "vision.grid.rows", row=5)
         self._entry(parent, "Cell padding px", "vision.grid.cell_padding_px", row=6)
         self._entry(parent, "Deferred gold threshold", "vision.grid.deferred_gold_ratio_threshold", row=7)
-        self._entry(parent, "Occupied mean threshold", "vision.grid.occupied_mean_threshold", row=8)
-        self._entry(parent, "Occupied stddev threshold", "vision.grid.occupied_stddev_threshold", row=9)
-        self._entry(parent, "Occupied edge threshold", "vision.grid.occupied_edge_threshold", row=10)
-        self._entry(parent, "Content ratio threshold", "vision.grid.content_ratio_threshold", row=11)
-        self._entry(parent, "Brown line threshold", "vision.grid.brown_line_ratio_threshold", row=12)
-        self._check(parent, "Use grayscale mask", "vision.grid.use_grayscale_mask", row=13)
-        self._entry(parent, "Canny threshold 1", "vision.grid.canny_threshold1", row=14)
-        self._entry(parent, "Canny threshold 2", "vision.grid.canny_threshold2", row=15)
-        self._entry(parent, "Canny dilate kernel", "vision.grid.canny_dilate_kernel", row=16)
-        self._entry(parent, "Canny dilate iterations", "vision.grid.canny_dilate_iterations", row=17)
-        self._entry(parent, "Mask minimum area", "vision.grid.mask_min_area", row=18)
-        self._entry(parent, "Mask cell ratio", "vision.grid.mask_cell_ratio_threshold", row=19)
+        self._check(parent, "Use grayscale mask", "vision.grid.use_grayscale_mask", row=8)
+        self._entry(parent, "Canny threshold 1", "vision.grid.canny_threshold1", row=9)
+        self._entry(parent, "Canny threshold 2", "vision.grid.canny_threshold2", row=10)
+        self._entry(parent, "Canny dilate kernel", "vision.grid.canny_dilate_kernel", row=11)
+        self._entry(parent, "Canny dilate iterations", "vision.grid.canny_dilate_iterations", row=12)
+        self._entry(parent, "Mask minimum area", "vision.grid.mask_min_area", row=13)
 
     def _entry(self, parent: ttk.Frame, label: str, key: str, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=4)

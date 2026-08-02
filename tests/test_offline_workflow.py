@@ -82,7 +82,6 @@ def test_provided_ritual_fixture_detects_deferred_and_available_items(tmp_path: 
     assert execution_result.status == "completed"
     assert (tmp_path / "output" / "debug" / "selection-preview.png").exists()
     debug_run = next((tmp_path / "output" / "debug").glob("run-*"))
-    assert (debug_run / "cell-analysis.png").exists()
     assert (debug_run / "grayscale-foreground-mask.png").exists()
     assert (debug_run / "available-foreground-mask.png").exists()
     assert (debug_run / "foreground-contours.png").exists()
@@ -121,7 +120,6 @@ def test_second_ritual_fixture_filters_grey_cells_and_clicks_deferred_items(tmp_
     assert plan.summary.items_selected == len(deferred_items)
     assert execution_result.status == "completed"
     debug_run = next((tmp_path / "output" / "debug").glob("run-*"))
-    assert (debug_run / "cell-analysis.png").exists()
     assert (debug_run / "grayscale-foreground-mask.png").exists()
     assert (debug_run / "available-foreground-mask.png").exists()
     assert (debug_run / "foreground-contours.png").exists()

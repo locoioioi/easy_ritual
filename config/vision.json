@@ -10,22 +10,13 @@
     "rows": 10,
     "cell_padding_px": 6,
     "item_region_inset_ratio": 0.1,
-    "occupied_mean_threshold": 14.0,
-    "occupied_stddev_threshold": 18.0,
-    "occupied_edge_threshold": 14.0,
     "deferred_gold_ratio_threshold": 0.013,
-    "filtered_mean_max": 12.0,
-    "filtered_stddev_max": 12.0,
-    "filtered_edge_max": 12.0,
-    "content_ratio_threshold": 0.035,
-    "brown_line_ratio_threshold": 0.02,
     "use_grayscale_mask": true,
     "canny_threshold1": 70,
     "canny_threshold2": 150,
     "canny_dilate_kernel": 3,
     "canny_dilate_iterations": 1,
-    "mask_min_area": 120.0,
-    "mask_cell_ratio_threshold": 0.012
+    "mask_min_area": 120.0
   },
   "matching": {
     "matched_score": 0.9,

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw, ImageFilter, ImageStat
+from PIL import Image, ImageDraw
 
 from ritual_helper.models import (
     CapturedFrame,
@@ -59,25 +59,16 @@ class GridRitualAnalyzer:
         self.columns = int(grid_config.get("columns", 10))
         self.rows = int(grid_config.get("rows", 10))
         self.cell_padding_px = int(grid_config.get("cell_padding_px", 4))
-        self.occupied_mean_threshold = float(grid_config.get("occupied_mean_threshold", 14.0))
-        self.occupied_stddev_threshold = float(grid_config.get("occupied_stddev_threshold", 18.0))
-        self.occupied_edge_threshold = float(grid_config.get("occupied_edge_threshold", 14.0))
         self.deferred_gold_ratio_threshold = float(grid_config.get("deferred_gold_ratio_threshold", 0.035))
-        self.filtered_mean_max = float(grid_config.get("filtered_mean_max", 12.0))
-        self.filtered_stddev_max = float(grid_config.get("filtered_stddev_max", 12.0))
-        self.filtered_edge_max = float(grid_config.get("filtered_edge_max", 12.0))
         self.item_region_inset_ratio = float(grid_config.get("item_region_inset_ratio", 0.1))
         self.max_item_cells = int(grid_config.get("max_item_cells", 8))
         self.item_click_delay_ms = int(grid_config.get("after_item_click_ms", 400))
-        self.content_ratio_threshold = float(grid_config.get("content_ratio_threshold", 0.035))
-        self.brown_line_ratio_threshold = float(grid_config.get("brown_line_ratio_threshold", 0.02))
         self.use_grayscale_mask = bool(grid_config.get("use_grayscale_mask", True))
         self.canny_threshold1 = int(grid_config.get("canny_threshold1", 70))
         self.canny_threshold2 = int(grid_config.get("canny_threshold2", 150))
         self.canny_dilate_kernel = int(grid_config.get("canny_dilate_kernel", 3))
         self.canny_dilate_iterations = int(grid_config.get("canny_dilate_iterations", 1))
         self.mask_min_area = float(grid_config.get("mask_min_area", 120.0))
-        self.mask_cell_ratio_threshold = float(grid_config.get("mask_cell_ratio_threshold", 0.012))
         self.allowed_item_shapes = {
             (1, 1),
             (1, 2),
@@ -101,15 +92,13 @@ class GridRitualAnalyzer:
         board_crop = image.crop(self.board.to_pixels(frame.client_width, frame.client_height))
         board_crop.save(debug_dir / "board.png")
 
-        cells = self._analyze_cells(image, frame.client_width, frame.client_height)
         grid_cells = self._grid_template_cells(frame.client_width, frame.client_height)
         foreground_mask = self._build_grayscale_foreground_mask(image, frame.client_width, frame.client_height)
-        cells = self._apply_foreground_occupancy(cells, foreground_mask, frame.client_width, frame.client_height)
-        deferred_positions = {(cell.row, cell.column) for cell in cells if cell.deferred}
+        deferred_positions = self._detect_deferred_positions(image, frame.client_width, frame.client_height)
         available_mask = self._mask_without_deferred_cells(foreground_mask, deferred_positions, frame.client_width, frame.client_height)
         mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, grid_cells)
         groups = [
-            *self._deferred_cell_groups(cells),
+            *self._deferred_cell_groups(grid_cells, deferred_positions),
             *self._detect_foreground_rectangles(
                 available_mask,
                 grid_cells,
@@ -119,14 +108,14 @@ class GridRitualAnalyzer:
             ),
         ]
         if not groups:
-            groups = self._group_from_mask_evidence(
-                cells,
-                mask_components,
-                {(cell.row, cell.column): cell for cell in cells},
+            groups = self._detect_foreground_rectangles(
+                foreground_mask,
+                grid_cells,
                 frame.client_width,
                 frame.client_height,
-            ) or self._group_cells(cells)
-        self._write_debug(cells, groups, image, debug_dir, foreground_mask, mask_components, available_mask)
+                set(),
+            )
+        self._write_debug(groups, image, debug_dir, foreground_mask, mask_components, available_mask)
         items = [self._group_to_item(index, group) for index, group in enumerate(groups, start=1)]
         actions = [
             PlanAction(
@@ -163,11 +152,11 @@ class GridRitualAnalyzer:
             ),
         )
 
-    def _analyze_cells(self, image: Image.Image, width: int, height: int) -> list[CellAnalysis]:
+    def _detect_deferred_positions(self, image: Image.Image, width: int, height: int) -> set[tuple[int, int]]:
         left, top, right, bottom = self.board.to_pixels(width, height)
         cell_width = (right - left) / self.columns
         cell_height = (bottom - top) / self.rows
-        cells = []
+        deferred_positions: set[tuple[int, int]] = set()
         for row in range(self.rows):
             for column in range(self.columns):
                 x1 = round(left + column * cell_width)
@@ -181,48 +170,19 @@ class GridRitualAnalyzer:
                     max(y1 + 1, y2 - self.cell_padding_px),
                 )
                 crop = image.crop(padded)
-                gray = crop.convert("L")
-                stat = ImageStat.Stat(gray)
-                edge_mean = ImageStat.Stat(gray.filter(ImageFilter.FIND_EDGES)).mean[0]
-                gold_ratio = self._gold_ratio(crop)
-                content_ratio, brown_line_ratio = self._cell_content_ratios(crop)
-                raw_occupied = (
-                    stat.mean[0] >= self.occupied_mean_threshold
-                    or stat.stddev[0] >= self.occupied_stddev_threshold
-                    or edge_mean >= self.occupied_edge_threshold
-                    or brown_line_ratio >= self.brown_line_ratio_threshold
-                )
-                deferred = raw_occupied and gold_ratio >= self.deferred_gold_ratio_threshold
-                filtered_out = (
-                    raw_occupied
-                    and not deferred
-                    and content_ratio < self.content_ratio_threshold
-                    and brown_line_ratio < self.brown_line_ratio_threshold
-                )
-                occupied = raw_occupied and not filtered_out
-                cells.append(
-                    CellAnalysis(
-                        row=row,
-                        column=column,
-                        rect=RatioRect(left=x1 / width, top=y1 / height, right=x2 / width, bottom=y2 / height),
-                        mean=stat.mean[0],
-                        stddev=stat.stddev[0],
-                        edge_mean=edge_mean,
-                        gold_ratio=gold_ratio,
-                        content_ratio=content_ratio,
-                        brown_line_ratio=brown_line_ratio,
-                        occupied=occupied,
-                        deferred=deferred,
-                        filtered_out=filtered_out,
-                    )
-        )
-        return cells
+                if self._gold_ratio(crop) >= self.deferred_gold_ratio_threshold:
+                    deferred_positions.add((row, column))
+        return deferred_positions
 
-    def _deferred_cell_groups(self, cells: list[CellAnalysis]) -> list[ItemGroup]:
+    def _deferred_cell_groups(
+        self,
+        cells: list[CellAnalysis],
+        deferred_positions: set[tuple[int, int]],
+    ) -> list[ItemGroup]:
         return [
-            self._component_to_group([cell])
+            self._component_to_group([cell], deferred=True)
             for cell in cells
-            if cell.deferred
+            if (cell.row, cell.column) in deferred_positions
         ]
 
     def _mask_without_deferred_cells(
@@ -277,9 +237,6 @@ class GridRitualAnalyzer:
                     )
                 )
         return cells
-
-    def _grid_cells(self, image: Image.Image, width: int, height: int) -> list[CellAnalysis]:
-        return self._grid_template_cells(width, height)
 
     def _detect_foreground_rectangles(
         self,
@@ -690,50 +647,6 @@ class GridRitualAnalyzer:
 
         return Image.fromarray(mask).convert("L")
 
-    def _apply_foreground_occupancy(
-        self,
-        cells: list[CellAnalysis],
-        foreground_mask: Image.Image,
-        width: int,
-        height: int,
-    ) -> list[CellAnalysis]:
-        left, top, right, bottom = self.board.to_pixels(width, height)
-        board_width, board_height = foreground_mask.size
-        cell_width = board_width / self.columns
-        cell_height = board_height / self.rows
-        mask_pixels = foreground_mask.load()
-        updated_cells: list[CellAnalysis] = []
-        for cell in cells:
-            local_x1 = round(cell.column * cell_width)
-            local_y1 = round(cell.row * cell_height)
-            local_x2 = round((cell.column + 1) * cell_width)
-            local_y2 = round((cell.row + 1) * cell_height)
-            inset = max(5, self.cell_padding_px)
-            sample_x1 = min(local_x2 - 1, local_x1 + inset)
-            sample_y1 = min(local_y2 - 1, local_y1 + inset)
-            sample_x2 = max(sample_x1 + 1, local_x2 - inset)
-            sample_y2 = max(sample_y1 + 1, local_y2 - inset)
-            foreground_pixels = 0
-            total_pixels = 0
-            for y in range(sample_y1, sample_y2):
-                for x in range(sample_x1, sample_x2):
-                    total_pixels += 1
-                    if mask_pixels[x, y] > 0:
-                        foreground_pixels += 1
-            foreground_ratio = foreground_pixels / max(total_pixels, 1)
-            occupied = foreground_ratio >= self.mask_cell_ratio_threshold or cell.deferred
-            filtered_out = not occupied and cell.mean >= self.occupied_mean_threshold
-            updated_cells.append(
-                replace(
-                    cell,
-                    content_ratio=foreground_ratio,
-                    occupied=occupied,
-                    deferred=occupied and cell.gold_ratio >= self.deferred_gold_ratio_threshold,
-                    filtered_out=filtered_out,
-                )
-            )
-        return updated_cells
-
     def _detect_mask_components(
         self,
         foreground_mask: Image.Image,
@@ -1134,7 +1047,7 @@ class GridRitualAnalyzer:
 
         return components
 
-    def _component_to_group(self, cells: list[CellAnalysis]) -> ItemGroup:
+    def _component_to_group(self, cells: list[CellAnalysis], deferred: bool | None = None) -> ItemGroup:
         return ItemGroup(
             cells=cells,
             rect=RatioRect(
@@ -1143,12 +1056,8 @@ class GridRitualAnalyzer:
                 right=max(cell.rect.right for cell in cells),
                 bottom=max(cell.rect.bottom for cell in cells),
             ),
-            deferred=any(cell.deferred for cell in cells),
-            inferred_cells=[
-                f"r{cell.row + 1}c{cell.column + 1}"
-                for cell in sorted(cells, key=lambda item: (item.row, item.column))
-                if not cell.occupied
-            ],
+            deferred=any(cell.deferred for cell in cells) if deferred is None else deferred,
+            inferred_cells=[],
         )
 
     @staticmethod
@@ -1231,7 +1140,6 @@ class GridRitualAnalyzer:
 
     def _write_debug(
         self,
-        cells: list[CellAnalysis],
         groups: list[ItemGroup],
         image: Image.Image,
         debug_dir: Path,
@@ -1256,22 +1164,6 @@ class GridRitualAnalyzer:
         )
 
         width, height = image.size
-        cell_overlay = image.copy()
-        cell_draw = ImageDraw.Draw(cell_overlay)
-        cell_draw.rectangle(self.board.to_pixels(width, height), outline=(255, 210, 90), width=4)
-        for cell in cells:
-            if cell.filtered_out:
-                color = (130, 130, 130)
-            elif cell.deferred:
-                color = (80, 220, 130)
-            elif cell.occupied:
-                color = (90, 210, 255)
-            else:
-                continue
-            rect = self._inset_rect(cell.rect).to_pixels(width, height)
-            cell_draw.rectangle(rect, outline=color, width=2)
-            cell_draw.text((rect[0] + 4, rect[1] + 4), f"{cell.row + 1},{cell.column + 1}", fill=color)
-        cell_overlay.save(debug_dir / "cell-analysis.png")
         if foreground_mask is not None:
             foreground_mask.save(debug_dir / "grayscale-foreground-mask.png")
         if contour_mask is not None:
@@ -1357,33 +1249,3 @@ class GridRitualAnalyzer:
             if red >= 115 and green >= 80 and blue <= 80 and red >= green >= blue:
                 gold += 1
         return gold / max(total, 1)
-
-    @staticmethod
-    def _cell_content_ratios(crop: Image.Image) -> tuple[float, float]:
-        rgb_crop = crop.convert("RGB")
-        edge = rgb_crop.convert("L").filter(ImageFilter.FIND_EDGES)
-        pixels = (
-            rgb_crop.get_flattened_data()
-            if hasattr(rgb_crop, "get_flattened_data")
-            else rgb_crop.getdata()
-        )
-        edge_pixels = (
-            edge.get_flattened_data()
-            if hasattr(edge, "get_flattened_data")
-            else edge.getdata()
-        )
-        total = 0
-        content = 0
-        brown_line = 0
-        for (red, green, blue), edge_value in zip(pixels, edge_pixels):
-            total += 1
-            maximum = max(red, green, blue)
-            minimum = min(red, green, blue)
-            saturation = maximum - minimum
-            gold = red >= 105 and green >= 70 and blue <= 85 and red >= green >= blue
-            if not gold and ((maximum > 55 and saturation > 18) or maximum > 80):
-                content += 1
-            brown = red >= 28 and green >= 18 and blue <= 55 and red >= green >= blue and saturation >= 8
-            if brown and edge_value > 18:
-                brown_line += 1
-        return content / max(total, 1), brown_line / max(total, 1)
