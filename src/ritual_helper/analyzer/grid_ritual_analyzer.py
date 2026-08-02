@@ -102,13 +102,21 @@ class GridRitualAnalyzer:
         board_crop.save(debug_dir / "board.png")
 
         cells = self._analyze_cells(image, frame.client_width, frame.client_height)
+        grid_cells = self._grid_template_cells(frame.client_width, frame.client_height)
         foreground_mask = self._build_grayscale_foreground_mask(image, frame.client_width, frame.client_height)
         cells = self._apply_foreground_occupancy(cells, foreground_mask, frame.client_width, frame.client_height)
-        available_mask = self._mask_without_deferred_cells(foreground_mask, cells, frame.client_width, frame.client_height)
-        mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, cells)
+        deferred_positions = {(cell.row, cell.column) for cell in cells if cell.deferred}
+        available_mask = self._mask_without_deferred_cells(foreground_mask, deferred_positions, frame.client_width, frame.client_height)
+        mask_components = self._detect_mask_components(foreground_mask, frame.client_width, frame.client_height, grid_cells)
         groups = [
             *self._deferred_cell_groups(cells),
-            *self._detect_foreground_rectangles(available_mask, cells, frame.client_width, frame.client_height),
+            *self._detect_foreground_rectangles(
+                available_mask,
+                grid_cells,
+                frame.client_width,
+                frame.client_height,
+                deferred_positions,
+            ),
         ]
         if not groups:
             groups = self._group_from_mask_evidence(
@@ -220,7 +228,7 @@ class GridRitualAnalyzer:
     def _mask_without_deferred_cells(
         self,
         foreground_mask: Image.Image,
-        cells: list[CellAnalysis],
+        deferred_positions: set[tuple[int, int]],
         width: int,
         height: int,
     ) -> Image.Image:
@@ -231,21 +239,47 @@ class GridRitualAnalyzer:
         board_height = bottom - top
         cell_width = board_width / self.columns
         cell_height = board_height / self.rows
-        for cell in cells:
-            if not cell.deferred:
-                continue
-            x1 = max(0, round(cell.column * cell_width) - 1)
-            y1 = max(0, round(cell.row * cell_height) - 1)
-            x2 = min(board_width, round((cell.column + 1) * cell_width) + 1)
-            y2 = min(board_height, round((cell.row + 1) * cell_height) + 1)
+        for row, column in deferred_positions:
+            x1 = max(0, round(column * cell_width) - 1)
+            y1 = max(0, round(row * cell_height) - 1)
+            x2 = min(board_width, round((column + 1) * cell_width) + 1)
+            y2 = min(board_height, round((row + 1) * cell_height) + 1)
             for y in range(y1, y2):
                 for x in range(x1, x2):
                     pixels[x, y] = 0
         return mask
 
+    def _grid_template_cells(self, width: int, height: int) -> list[CellAnalysis]:
+        left, top, right, bottom = self.board.to_pixels(width, height)
+        cell_width = (right - left) / self.columns
+        cell_height = (bottom - top) / self.rows
+        cells: list[CellAnalysis] = []
+        for row in range(self.rows):
+            for column in range(self.columns):
+                x1 = left + column * cell_width
+                y1 = top + row * cell_height
+                x2 = left + (column + 1) * cell_width
+                y2 = top + (row + 1) * cell_height
+                cells.append(
+                    CellAnalysis(
+                        row=row,
+                        column=column,
+                        rect=RatioRect(left=x1 / width, top=y1 / height, right=x2 / width, bottom=y2 / height),
+                        mean=0.0,
+                        stddev=0.0,
+                        edge_mean=0.0,
+                        gold_ratio=0.0,
+                        content_ratio=0.0,
+                        brown_line_ratio=0.0,
+                        occupied=False,
+                        deferred=False,
+                        filtered_out=False,
+                    )
+                )
+        return cells
+
     def _grid_cells(self, image: Image.Image, width: int, height: int) -> list[CellAnalysis]:
-        cells = self._analyze_cells(image, width, height)
-        return [replace(cell, occupied=False, filtered_out=False) for cell in cells]
+        return self._grid_template_cells(width, height)
 
     def _detect_foreground_rectangles(
         self,
@@ -253,12 +287,14 @@ class GridRitualAnalyzer:
         cells: list[CellAnalysis],
         width: int,
         height: int,
+        deferred_positions: set[tuple[int, int]] | None = None,
     ) -> list[ItemGroup]:
         left, top, _right, _bottom = self.board.to_pixels(width, height)
         board_width, board_height = foreground_mask.size
         cell_width = board_width / self.columns
         cell_height = board_height / self.rows
         by_position = {(cell.row, cell.column): cell for cell in cells}
+        deferred_positions = deferred_positions or set()
         contours = self._merge_line_like_contours(
             self._foreground_contours(foreground_mask),
             cell_width,
@@ -278,20 +314,11 @@ class GridRitualAnalyzer:
                 (row, column)
                 for row in range(min_row, max_row + 1)
                 for column in range(min_column, max_column + 1)
-                if not by_position[(row, column)].deferred
+                if (row, column) not in deferred_positions
             )
             if not positions or not self._is_legal_item_shape(positions):
                 continue
             contour_cells = [by_position[position] for position in sorted(positions)]
-            deferred_cells = [
-                cell
-                for cell in contour_cells
-                if cell.gold_ratio >= self.deferred_gold_ratio_threshold
-            ]
-            deferred = bool(deferred_cells) and (
-                len(contour_cells) == 1
-                or len(deferred_cells) / len(contour_cells) >= 0.5
-            )
             rect = self._pixel_rect_to_ratio_rect(
                 (
                     max(left, x1 + left - 2),
@@ -307,7 +334,7 @@ class GridRitualAnalyzer:
                     "local_bbox": (x1, y1, x2, y2),
                     "cells": contour_cells,
                     "pixels": pixels,
-                    "deferred": deferred,
+                    "deferred": False,
                     "rect": rect,
                 }
             )
