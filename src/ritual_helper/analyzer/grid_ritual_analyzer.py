@@ -118,7 +118,7 @@ class GridRitualAnalyzer:
                 frame.client_width,
                 frame.client_height,
             ) or self._group_cells(cells)
-        self._write_debug(cells, groups, image, debug_dir, foreground_mask, mask_components)
+        self._write_debug(cells, groups, image, debug_dir, foreground_mask, mask_components, available_mask)
         items = [self._group_to_item(index, group) for index, group in enumerate(groups, start=1)]
         actions = [
             PlanAction(
@@ -1210,6 +1210,7 @@ class GridRitualAnalyzer:
         debug_dir: Path,
         foreground_mask: Image.Image | None = None,
         mask_components: list[MaskComponent] | None = None,
+        contour_mask: Image.Image | None = None,
     ) -> None:
         write_json(
             debug_dir / "item-groups.json",
@@ -1246,6 +1247,10 @@ class GridRitualAnalyzer:
         cell_overlay.save(debug_dir / "cell-analysis.png")
         if foreground_mask is not None:
             foreground_mask.save(debug_dir / "grayscale-foreground-mask.png")
+        if contour_mask is not None:
+            contour_mask.save(debug_dir / "available-foreground-mask.png")
+            self._write_foreground_contours_debug(image, contour_mask, debug_dir)
+            self._write_contour_cell_footprints_debug(groups, image, debug_dir)
         if mask_components is not None:
             component_overlay = image.copy()
             component_draw = ImageDraw.Draw(component_overlay)
@@ -1253,6 +1258,50 @@ class GridRitualAnalyzer:
                 component_draw.rectangle(component.bbox, outline=(255, 0, 255), width=2)
                 component_draw.text((component.bbox[0] + 3, component.bbox[1] + 3), str(index), fill=(255, 0, 255))
             component_overlay.save(debug_dir / "mask-components.png")
+
+    def _write_foreground_contours_debug(self, image: Image.Image, contour_mask: Image.Image, debug_dir: Path) -> None:
+        width, height = image.size
+        left, top, right, bottom = self.board.to_pixels(width, height)
+        overlay = image.copy()
+        try:
+            import cv2
+            import numpy as np
+        except Exception:
+            pixels = contour_mask.load()
+            draw = ImageDraw.Draw(overlay)
+            for y in range(contour_mask.height):
+                for x in range(contour_mask.width):
+                    if pixels[x, y] > 0:
+                        draw.point((left + x, top + y), fill=(255, 0, 255))
+            overlay.save(debug_dir / "foreground-contours.png")
+            return
+
+        board_crop = np.array(overlay.crop((left, top, right, bottom)).convert("RGB"))
+        mask_array = np.array(contour_mask)
+        contours, _hierarchy = cv2.findContours(mask_array, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(board_crop, contours, -1, (255, 0, 255), 2)
+        overlay.paste(Image.fromarray(board_crop), (left, top))
+        overlay.save(debug_dir / "foreground-contours.png")
+
+    def _write_contour_cell_footprints_debug(
+        self,
+        groups: list[ItemGroup],
+        image: Image.Image,
+        debug_dir: Path,
+    ) -> None:
+        width, height = image.size
+        overlay = image.copy()
+        draw = ImageDraw.Draw(overlay)
+        draw.rectangle(self.board.to_pixels(width, height), outline=(255, 210, 90), width=4)
+        for index, group in enumerate(groups, start=1):
+            color = (80, 220, 130) if group.deferred else (255, 0, 255)
+            cell_color = (80, 220, 130) if group.deferred else (90, 210, 255)
+            for cell in group.cells:
+                draw.rectangle(self._inset_rect(cell.rect).to_pixels(width, height), outline=cell_color, width=2)
+            rect = group.rect.to_pixels(width, height)
+            draw.rectangle(rect, outline=color, width=3)
+            draw.text((rect[0] + 3, max(0, rect[1] - 12)), f"item-{index:03d}: {len(group.cells)} cells", fill=color)
+        overlay.save(debug_dir / "contour-cell-footprints.png")
 
     def _inset_rect(self, rect: RatioRect) -> RatioRect:
         width = rect.right - rect.left
